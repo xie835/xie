@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <!-- 微信缓存控制 -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <!-- 防链策略 -->
+    <meta http-equiv="Content-Security-Policy" content="img-src * data:; media-src *; style-src'self' 'unsafe-inline'">
+    <!-- 基础设置 -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>免费商品相册</title>
+    <style>
+        :root {
+            --primary: #07c160;
+        }
+
+        body {
+            font-family: -apple-system, sans-serif;
+            max-width: 750px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .add-form {
+            display: grid;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        input,
+        button {
+            padding: 10px;
+            border-radius: 8px;
+        }
+
+        button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        .goods-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+        }
+
+        .goods-item {
+            border: 1px solid #eee;
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .goods-item img {
+            width: 100%;
+            height: 180px;
+            object-fit: cover;
+            border-radius: 8px;
+        }
+
+        .share-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 25px;
+            border-radius: 25px;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            z-index: 1000;
+        }
+
+        .toast.success {
+            background-color: var(--primary);
+        }
+
+        .toast.error {
+            background-color: #ff5722;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>商品管理</h2>
+    <div class="add-form">
+        <input type="text" id="name" placeholder="商品名称">
+        <input type="number" id="price" placeholder="价格（元）">
+        <input type="text" id="image" placeholder="图片链接（可空）">
+        <button onclick="goodsManager.addGoods()">添加商品</button>
+    </div>
+    <h3>已上架商品（共<span id="count">0</span>件）</h3>
+    <div class="goods-list" id="goodsList"></div>
+    <button class="share-btn" onclick="goodsManager.generateLink()">生成分享链接</button>
+    <script>
+        class GoodsManager {
+            constructor() {
+                this.goods = [];
+                this.init();
+            }
+
+            async init() {
+                this.loadFromStorage();
+                this.loadFromUrl();
+                this.setupEventListeners();
+                this.updateDisplay();
+            }
+
+            loadFromStorage() {
+                const storedGoods = localStorage.getItem('goods');
+                if (storedGoods) {
+                    this.goods = JSON.parse(storedGoods);
+                }
+            }
+
+            loadFromUrl() {
+                const urlParams = new URLSearchParams(window.location.search);
+                const encodedData = urlParams.get('data');
+                if (encodedData) {
+                    try {
+                        const decodedData = decodeURIComponent(escape(atob(encodedData)));
+                        const goodsFromUrl = JSON.parse(decodedData);
+                        this.goods = goodsFromUrl;
+                        this.saveToStorage();
+                    } catch (e) {
+                        this.showError(`解析链接数据失败：${e.message}`);
+                    }
+                }
+            }
+
+            saveToStorage() {
+                try {
+                    localStorage.setItem('goods', JSON.stringify(this.goods));
+                } catch (e) {
+                    if (e.name === 'QuotaExceededError') {
+                        this.showError('存储空间不足，请清理数据');
+                        throw new Error('本地存储空间已满');
+                    }
+                }
+            }
+
+            updateDisplay() {
+                const list = document.getElementById('goodsList');
+                const countSpan = document.getElementById('count');
+                list.innerHTML = '';
+                this.goods.forEach((item) => {
+                    const div = document.createElement('div');
+                    div.className = 'goods-item';
+                    div.innerHTML = `
+                        ${item.image? `<img src="${item.image}">` : '<div class="goods-image-placeholder">无图片</div>'}
+                        <h4>${item.name}</h4>
+                        <p class="price">￥${item.price}</p>
+                        <button onclick="goodsManager.deleteGoods(${item.id})">删除</button>
+                    `;
+                    list.appendChild(div);
+                });
+                countSpan.textContent = this.goods.length;
+            }
+
+            async addGoods() {
+                try {
+                    const name = document.getElementById('name').value;
+                    const price = document.getElementById('price').value;
+                    const image = document.getElementById('image').value;
+                    if (!name ||!price) {
+                        throw new Error('商品名称和价格不能为空');
+                    }
+                    const goodsItem = {
+                        id: Date.now(),
+                        name: name.trim(),
+                        price: price.trim(),
+                        image: image.trim(),
+                        created: new Date().toISOString()
+                    };
+                    this.goods.push(goodsItem);
+                    this.saveToStorage();
+                    this.updateDisplay();
+                    document.getElementById('name').value = '';
+                    document.getElementById('price').value = '';
+                    document.getElementById('image').value = '';
+                    this.showSuccess('商品添加成功！');
+                } catch (e) {
+                    this.showError(`操作失败：${e.message}`);
+                } finally {
+                    this.hideLoading();
+                }
+            }
+
+            generateLink() {
+                try {
+                    const data = JSON.stringify(this.goods);
+                    const encodedData = btoa(unescape(encodeURIComponent(data)));
+                    const baseUrl = window.location.href.split('?')[0];
+                    const shareLink = `${baseUrl}?v=1&data=${encodedData}`;
+                    if (navigator.clipboard) {
+                        navigator.clipboard.writeText(shareLink).then(() => {
+                            this.showSuccess('链接已复制到剪贴板！');
+                        }).catch(() => {
+                            this.showCopyPrompt(shareLink);
+                        });
+                    } else {
+                        this.showCopyPrompt(shareLink);
+                    }
+                    this.trackAnalytics('share');
+                } catch (e) {
+                    this.showError(`生成失败：${e.message}`);
+                }
+            }
+
+            showCopyPrompt(link) {
+                const input = document.createElement('input');
+                input.value = link;
+                document.body.appendChild(input);
+                input.select();
+                try {
+                    document.execCommand('copy');
+                    this.showSuccess('链接已选中，请手动粘贴');
+                } catch (e) {
+                    prompt('请手动复制以下链接：', link);
+                }
+                document.body.removeChild(input);
+            }
+
+            trackAnalytics(eventType) {
+                console.log(`Track event: ${eventType}`);
+                // 实际可接入Google Analytics等
+            }
+
+            showSuccess(msg) {
+                const toast = document.createElement('div');
+                toast.className = 'toast success';
+                toast.textContent = msg;
+                document.body.appendChild(toast);
+                setTimeout(() => {
+                    toast.remove();
+                }, 2000);
+            }
+
+            showError(msg) {
+                const toast = document.createElement('div');
+                toast.className = 'toast error';
+                toast.innerHTML = `
+                    ${msg}
+                    <button onclick="this.parentNode.remove()">×</button>
+                `;
+                document.body.appendChild(toast);
+                setTimeout(() => {
+                    toast.style.opacity = 0;
+                    setTimeout(() => toast.remove(), 300);
+                }, 5000);
+            }
+
+            showLoading() {
+                // 这里假设页面有id为loading的元素来显示加载状态
+                const loadingElement = document.getElementById('loading');
+                if (loadingElement) {
+                    loadingElement.style.display = 'block';
+                }
+            }
+
+            hideLoading() {
+                const loadingElement = document.getElementById('loading');
+                if (loadingElement) {
+                    loadingElement.style.display = 'none';
+                }
+            }
+
+            deleteGoods(id) {
+                if (confirm('确定要删除这个商品吗？')) {
+                    this.goods = this.goods.filter((item) => item.id!== id);
+                    this.saveToStorage();
+                    this.updateDisplay();
+                    this.showSuccess('商品已删除');
+                }
+            }
+
+            setupEventListeners() {
+                const addButton = document.querySelector('button[onclick="goodsManager.addGoods()"]');
+                const shareButton = document.querySelector('button[onclick="goodsManager.generateLink()"]');
+                if (addButton) {
+                    addButton.addEventListener('click', this.addGoods.bind(this));
+                }
+                if (shareButton) {
+                    shareButton.addEventListener('click', this.generateLink.bind(this));
+                }
+            }
+        }
+
+        const goodsManager = new GoodsManager();
+
+        function handleFileDrop(e) {
+            e.preventDefault();
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('image/')) {
+                goodsManager.showLoading();
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    document.getElementById('image').value = event.target.result;
+                    goodsManager.hideLoading();
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        document.addEventListener('dragover', (e) => {
+            e.preventDefault();
+        });
+
+        document.addEventListener('drop', handleFileDrop);
+    </script>
+</body>
+
+</html>
